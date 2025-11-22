@@ -1,0 +1,249 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Ao no Sumika - 練琴小幫手</title>
+    <style>
+        body { font-family: 'Segoe UI', sans-serif; background: #f0f4f8; display: flex; flex-direction: column; align-items: center; min-height: 100vh; margin: 0; padding: 20px; }
+        h1 { color: #2c3e50; margin-bottom: 10px; }
+        .controls { background: white; padding: 20px; border-radius: 12px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); display: flex; gap: 20px; align-items: center; margin-bottom: 30px; }
+        button { background: #3b82f6; color: white; border: none; padding: 10px 20px; border-radius: 6px; cursor: pointer; font-size: 16px; transition: 0.2s; }
+        button:hover { background: #2563eb; }
+        button.stop { background: #ef4444; }
+        button.stop:hover { background: #dc2626; }
+        
+        .slider-group { display: flex; flex-direction: column; align-items: center; }
+        label { font-size: 14px; color: #64748b; margin-bottom: 5px; }
+        
+        /* Piano Styling */
+        .piano-container { position: relative; display: flex; justify-content: center; overflow-x: auto; padding: 10px; background: #1e293b; border-radius: 8px; box-shadow: 0 10px 20px rgba(0,0,0,0.3); }
+        .key { position: relative; width: 40px; height: 200px; background: white; border: 1px solid #ccc; border-radius: 0 0 4px 4px; margin: 0 1px; z-index: 1; cursor: pointer; transition: background 0.1s; box-shadow: inset 0 -5px 0 rgba(0,0,0,0.1); }
+        .key.black { width: 24px; height: 120px; background: #111; position: absolute; z-index: 2; margin-left: -12px; border-radius: 0 0 3px 3px; box-shadow: inset 0 -2px 0 rgba(255,255,255,0.2); }
+        
+        /* Active State - Blue for "Ao no Sumika" */
+        .key.active { background: #60a5fa !important; box-shadow: 0 0 15px #60a5fa; transform: translateY(2px); }
+        .key.black.active { background: #2563eb !important; }
+
+        .note-label { position: absolute; bottom: 10px; left: 0; right: 0; text-align: center; font-size: 10px; color: #94a3b8; pointer-events: none; }
+        .status { margin-top: 20px; color: #64748b; font-weight: bold; }
+    </style>
+</head>
+<body>
+
+    <h1>Ao no Sumika (An Vo版) - 練習模擬器</h1>
+    <p>針對你上傳的樂譜第一頁 (Intro) 製作的互動教學</p>
+
+    <div class="controls">
+        <button id="playBtn">▶ 播放示範</button>
+        <button id="stopBtn" class="stop">■ 停止</button>
+        <div class="slider-group">
+            <label>速度 (Speed): <span id="speedVal">100%</span></label>
+            <input type="range" id="speedSlider" min="0.3" max="1.2" step="0.1" value="1.0">
+        </div>
+    </div>
+
+    <div class="piano-container" id="piano">
+        </div>
+
+    <div class="status" id="statusText">準備就緒 - 請點擊播放</div>
+
+<script>
+    // 1. Piano Logic
+    const context = new (window.AudioContext || window.webkitAudioContext)();
+    const pianoEl = document.getElementById('piano');
+    const playBtn = document.getElementById('playBtn');
+    const stopBtn = document.getElementById('stopBtn');
+    const speedSlider = document.getElementById('speedSlider');
+    const speedVal = document.getElementById('speedVal');
+    const statusText = document.getElementById('statusText');
+
+    // Generate Keys (F2 to C7 coverage for this song)
+    const notes = ['C', 'Db', 'D', 'Eb', 'E', 'F', 'Gb', 'G', 'Ab', 'A', 'Bb', 'B'];
+    const startOctave = 2;
+    const endOctave = 7;
+    let keyElements = {};
+
+    function createPiano() {
+        let keyIndex = 0;
+        for (let oct = startOctave; oct <= endOctave; oct++) {
+            notes.forEach((note, i) => {
+                const noteName = `${note}${oct}`;
+                const isBlack = note.includes('b');
+                
+                // Skip if purely C2 start logic needed, but standard loop is fine
+                
+                if (!isBlack) {
+                    const div = document.createElement('div');
+                    div.className = 'key white';
+                    div.dataset.note = noteName;
+                    div.innerHTML = `<span class="note-label">${noteName}</span>`;
+                    pianoEl.appendChild(div);
+                    keyElements[noteName] = div;
+                    
+                    // Add previous black key if exists
+                    const prevNoteIndex = i - 1;
+                    if (prevNoteIndex >= 0 && notes[prevNoteIndex].includes('b')) {
+                         const blackNoteName = `${notes[prevNoteIndex]}${oct}`;
+                         const blackDiv = document.createElement('div');
+                         blackDiv.className = 'key black';
+                         blackDiv.dataset.note = blackNoteName;
+                         // Position calculation roughly
+                         blackDiv.style.left = (div.offsetLeft - 12) + 'px'; 
+                         // We need to append black keys differently to handle flow, 
+                         // simplistic CSS approach used here: place inside white key container? No.
+                         // Simple approach: Render all white first? No.
+                         // Improved CSS Flex approach: 
+                         // We will cheat slightly for pure CSS visualization:
+                    }
+                }
+            });
+        }
+    }
+    
+    // Simpler Render Approach for mixed keys
+    pianoEl.innerHTML = '';
+    let keyMap = []; // to store order
+    
+    // Helper to get Frequency
+    function getFreq(note) {
+        const noteOrder = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B']; // Use sharps for calc
+        // Convert flats to sharps
+        let cleanNote = note.replace('Db', 'C#').replace('Eb', 'D#').replace('Gb', 'F#').replace('Ab', 'G#').replace('Bb', 'A#');
+        let octave = parseInt(cleanNote.slice(-1));
+        let tone = cleanNote.slice(0, -1);
+        let semitoneOffset = noteOrder.indexOf(tone) - 9; // A is index 9
+        let octaveOffset = octave - 4;
+        let totalSemitones = semitoneOffset + (octaveOffset * 12);
+        return 440 * Math.pow(2, totalSemitones / 12);
+    }
+
+    // Render Keys Properly
+    const allNotes = [];
+    for(let i=startOctave; i<=endOctave; i++) {
+        notes.forEach(n => allNotes.push(n+i));
+    }
+    
+    allNotes.forEach((n, idx) => {
+        const isBlack = n.includes('b');
+        if(!isBlack) {
+            const wKey = document.createElement('div');
+            wKey.className = 'key white';
+            wKey.id = `key-${n}`;
+            pianoEl.appendChild(wKey);
+            keyElements[n] = wKey;
+            
+            // Look ahead for black key
+            let nextNote = allNotes[idx+1];
+            if(nextNote && nextNote.includes('b')) {
+                const bKey = document.createElement('div');
+                bKey.className = 'key black';
+                bKey.id = `key-${nextNote}`;
+                wKey.appendChild(bKey); // Nesting for easier positioning
+                keyElements[nextNote] = bKey;
+            }
+        }
+    });
+
+    // Sound Engine
+    function playTone(note, duration) {
+        const osc = context.createOscillator();
+        const gain = context.createGain();
+        osc.type = 'triangle'; // Soft piano-ish
+        osc.frequency.value = getFreq(note);
+        
+        osc.connect(gain);
+        gain.connect(context.destination);
+        
+        osc.start();
+        gain.gain.setValueAtTime(0.3, context.currentTime);
+        gain.gain.exponentialRampToValueAtTime(0.01, context.currentTime + duration);
+        osc.stop(context.currentTime + duration);
+        
+        // Visual
+        const el = keyElements[note];
+        if(el) {
+            el.classList.add('active');
+            setTimeout(() => el.classList.remove('active'), duration * 900);
+        }
+    }
+
+    // 2. The Score (Based on your "An Vo" Image 1 - Intro)
+    // 5 Flats: Db, Eb, Gb, Ab, Bb
+    // Intro Melody approx transcription
+    const bpm = 150;
+    let isPlaying = false;
+    let timeouts = [];
+
+    // format: [beat, note, duration(beats)]
+    // Intro Bar 1-2 (Right Hand mainly for demo)
+    const melody = [
+        // Bar 1
+        [0, 'Db6', 0.5], [0.5, 'C6', 0.5], [1.0, 'Ab5', 0.5], [1.5, 'F5', 0.5], 
+        [2.0, 'Eb5', 0.5], [2.5, 'Db5', 0.5], [3.0, 'Ab4', 0.5], [3.5, 'Db5', 0.5],
+        
+        // Bar 2
+        [4.0, 'Bb5', 1.0], [5.0, 'Ab5', 1.0], [6.0, 'F5', 1.5], [7.5, 'Eb5', 0.5],
+        
+        // Bar 3 (Arpeggios start)
+        [8.0, 'Db5', 0.5], [8.5, 'F5', 0.5], [9.0, 'Ab5', 0.5], [9.5, 'Db6', 0.5],
+        [10.0, 'C6', 0.5], [10.5, 'Ab5', 0.5], [11.0, 'F5', 0.5], [11.5, 'Eb5', 0.5],
+        
+        // Left Hand Bass (Simplified for clarity)
+        [0, 'Db3', 2], [4, 'Bb2', 2], [8, 'Gb2', 2] 
+    ];
+
+    function playScore() {
+        if(isPlaying) stopScore();
+        isPlaying = true;
+        statusText.innerText = "播放中...";
+        
+        // Unlock Audio Context
+        if(context.state === 'suspended') context.resume();
+
+        const speed = parseFloat(speedSlider.value);
+        const beatTime = 60 / (bpm * speed); // seconds per beat
+
+        melody.forEach(item => {
+            const startBeat = item[0];
+            const note = item[1];
+            const durBeats = item[2];
+            
+            const timeMs = startBeat * beatTime * 1000;
+            const id = setTimeout(() => {
+                playTone(note, durBeats * beatTime);
+            }, timeMs);
+            timeouts.push(id);
+        });
+
+        // Auto reset
+        const totalDuration = 16 * beatTime * 1000;
+        const endId = setTimeout(() => {
+            isPlaying = false;
+            statusText.innerText = "播放結束";
+        }, totalDuration);
+        timeouts.push(endId);
+    }
+
+    function stopScore() {
+        timeouts.forEach(id => clearTimeout(id));
+        timeouts = [];
+        isPlaying = false;
+        document.querySelectorAll('.key').forEach(k => k.classList.remove('active'));
+        statusText.innerText = "已停止";
+    }
+
+    // Events
+    playBtn.addEventListener('click', playScore);
+    stopBtn.addEventListener('click', stopScore);
+    speedSlider.addEventListener('input', (e) => {
+        speedVal.innerText = Math.round(e.target.value * 100) + "%";
+        if(isPlaying) {
+            stopScore();
+            playScore(); // Restart with new speed
+        }
+    });
+
+</script>
+</body>
+</html>
